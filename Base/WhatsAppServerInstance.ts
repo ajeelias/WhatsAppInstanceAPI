@@ -32,8 +32,14 @@
 //20-08-25 22:45  Fixed URL construction to avoid double port issue in file downloads
 //21-08-25 23:00  Added #setReadMessages command for automatic message reading functionality
 //21-08-25 23:05  Updated #setReadMessages to use English messages and explicit on/off parameters
+//21-08-25 23:15  Added /setMessageRead endpoint for marking individual messages as read via API
+//21-08-25 23:25  Added persistent GUID tracking to prevent duplicate message sending across restarts
+//21-08-25 23:30  Enhanced GUID tracking with 7-day retention and automatic cleanup
+//21-08-25 23:35  Fixed sendMessage response to return real WhatsApp message ID instead of timestamp
 //11-08-25 AJE: Agregado + al número y "Reenviado desde" en formato de reenvío
 //11-08-25 AJE: Corregido reenvío de mensajes de grupo y filtrado de mensajes de protocolo
+//04-09-25 23:45  AJE: Enhanced duplicate control by storing GUID + WhatsApp ID pairs for better message tracking
+//04-09-25 23:55  AJE: Only consider messages truly sent if they have both GUID and WhatsApp response ID
 
 import { Boom } from '@hapi/boom'
 import NodeCache from '@cacheable/node-cache'
@@ -280,6 +286,17 @@ var autoReadMessages: boolean = false;
 // 2025-08-11 - AJE: Path del archivo de credenciales para guardado
 var credentialsFilePath: string = '';
 
+// 21-08-25 23:25 - AJE: Map para almacenar GUIDs ya enviados con timestamp y archivo de persistencia
+// 04-09-25 23:45 - AJE: Enhanced to store GUID + WhatsApp ID pairs for better duplicate control
+interface SentMessageInfo {
+    timestamp: number;
+    whatsappId?: string; // ID real que devuelve WhatsApp
+}
+
+var sentGuids: Map<string, SentMessageInfo> = new Map();
+const sentGuidsFilePath = path.join(__dirname, 'sentGuids.json');
+const GUID_RETENTION_DAYS = 7;
+
 // Global socket variable for access in API endpoints
 var globalSock: any = null;
 
@@ -486,8 +503,9 @@ const timeToResendPendings = 90 * 1000 // cada 3 minutos que haga el ResendPendi
 
 // start a connection
 const init = async() => {
-	// Load existing queue on startup
+	// Load existing queue and sent GUIDs on startup
 	await loadQueueFromFile();
+	await loadSentGuidsFromFile();
 	
 	const { state, saveCreds } = await useMultiFileAuthState('baileys_auth_info')
 	// fetch latest version of WA Web
@@ -1259,12 +1277,59 @@ async function initWebServer(sock,handler) {
 		//response.send(request.body);    // echo the result back
 	})
 
+	// 21-08-25 23:15  Endpoint para marcar mensajes como leídos
 	app.post('/setMessageRead', async(request, response) => {
-		console.log(request.body) // your JSON
-		// this.setMessageRead(request, response)
-		// .then('Sent successfully!')
-		//response.send(request.body);    // echo the result back
+		console.log('setMessageRead api=', request.body)
+		
+		try {
+			// Validar que tenga los campos requeridos
+			if (!request.body.phone || !request.body.messageId) {
+				response.status(400).json({
+					success: false,
+					error: "Missing required fields: phone and messageId"
+				})
+				return
+			}
+
+			// Validar conexión
+			if (connectionStatus !== 'open') {
+				response.status(503).json({
+					success: false,
+					error: "WhatsApp connection not available",
+					status: connectionStatus
+				})
+				return
+			}
+
+			const phone = request.body.phone.includes('@') ? request.body.phone : `${request.body.phone}@s.whatsapp.net`
+			const messageKey = {
+				remoteJid: phone,
+				id: request.body.messageId,
+				fromMe: request.body.fromMe || false
+			}
+
+			// Marcar mensaje como leído
+			await sock!.readMessages([messageKey])
+			
+			console.log(`✅ Message marked as read: ${request.body.messageId} from ${phone}`)
+			
+			response.json({
+				success: true,
+				message: "Message marked as read",
+				phone: phone,
+				messageId: request.body.messageId
+			})
+
+		} catch (error) {
+			console.error('❌ Error marking message as read:', error)
+			response.status(500).json({
+				success: false,
+				error: "Failed to mark message as read",
+				details: error.message
+			})
+		}
 	})
+
 	app.post('/setChatRead', async(request, response) => {
 		console.log(request.body) // your JSON
 		// this.setChatRead(request, response)
@@ -2757,14 +2822,16 @@ async function sendMessageNew(req, res, sock, handler) {
         if (req.body.typing !== false && (messageType === 'text' || messageType === 'extendedtext' || messageType === 'extended_text')) {
             const textContent = req.body.text || req.body.body || '';
             if (textContent) {
-                await sendWithTypingSimulation(globalSock, phoneNumber, textContent);
-                // Ya se envió el mensaje en la simulación, marcar como enviado
+                const typingResponse = await sendWithTypingSimulation(globalSock, phoneNumber, textContent);
+                // Usar el ID real del mensaje enviado
                 return res.json({
-                    id: Date.now().toString(),
+                    id: typingResponse?.key?.id || Date.now().toString(),
                     sent: true,
                     message: "Sent to",
                     phone: req.body.phone,
-                    status: "pending"
+                    status: "pending",
+                    messageId: typingResponse?.key?.id,
+                    key: typingResponse?.key
                 });
             }
         }
@@ -2869,6 +2936,7 @@ async function sendMessageNew(req, res, sock, handler) {
     }
 }
 
+// 04-09-25 23:45 - AJE: Modified to return WhatsApp response for GUID tracking
 async function sendTextMessage(req, res, sock, handler) {
     let response;
     let phoneNumber;
@@ -2909,10 +2977,10 @@ async function sendTextMessage(req, res, sock, handler) {
 		const guid = req.body.guid
 
         // Usar simulación de escritura más realista
-        await sendWithTypingSimulation(sock, phoneNumber, req.body.text || req.body.body);
+        const realResponse = await sendWithTypingSimulation(sock, phoneNumber, req.body.text || req.body.body);
         
-        // Ya no necesitamos enviar el mensaje aquí porque sendWithTypingSimulation lo hace
-        response = { key: { id: Date.now().toString() } }; // Respuesta temporal para mantener compatibilidad
+        // Usar la respuesta real del mensaje enviado
+        response = realResponse || { key: { id: Date.now().toString() } }; // Fallback por compatibilidad
 		response.key.guid = guid;
 
         console.log('Message Sent Response: ', response);
@@ -2931,6 +2999,8 @@ async function sendTextMessage(req, res, sock, handler) {
 			guid: guid
         });
 
+		// 04-09-25 23:45 - AJE: Return response for GUID tracking
+		return response;
 		
     } catch (err) {
         console.error('Error sending text message: ', err);
@@ -2949,6 +3019,9 @@ async function sendTextMessage(req, res, sock, handler) {
                 status: err.message
             });
         }
+        
+        // 04-09-25 23:45 - AJE: Return null in case of error
+        return null;
     }
 }
 
@@ -3228,6 +3301,7 @@ async function sendConnectServices(m) {
 }
 
 
+// 04-09-25 23:45 - AJE: Modified to return WhatsApp response for GUID tracking
 async function sendFile(req, res, sock, handler) {
 	let content;
 	let type = 'document'; // Valor por defecto
@@ -3342,6 +3416,9 @@ async function _sendMessage(req, res, pType, options, sock, handler) {
         	// sendAsync(jsonToSend).then(handler.addMessage());
 			sendAsync(jsonToSend);
 
+			// 04-09-25 23:45 - AJE: Return response for GUID tracking
+			return response;
+
 		} catch (err) {
 			console.error('Error enviando archivo:', err);
 			if (err === 'Error: Connection Closed') {
@@ -3353,6 +3430,9 @@ async function _sendMessage(req, res, pType, options, sock, handler) {
 				phone: req.body.phone,
 				status: err.toString()
 			});
+			
+			// 04-09-25 23:45 - AJE: Return null in case of error
+			return null;
 		}
 	} else {
 		console.error('Error: Número de teléfono no existe en WhatsApp');
@@ -3362,6 +3442,9 @@ async function _sendMessage(req, res, pType, options, sock, handler) {
 			phone: req.body.phone,
 			status: "Error Sending, number does not exist in WhatsApp"
 		});
+		
+		// 04-09-25 23:45 - AJE: Return null when number doesn't exist
+		return null;
 	}
 }
 
@@ -3762,6 +3845,12 @@ function handleConnectionStatusChange(connectionStatus) {
 		setInterval(() => {
 			resendPendings()
 		}, timeToResendPendings)
+		
+		// 21-08-25 23:30 - AJE: Cleanup old GUIDs every 6 hours
+		setInterval(() => {
+			cleanupOldGuids()
+			saveSentGuidsToFile()
+		}, 6 * 60 * 60 * 1000) // 6 hours
 	}
 
 	
@@ -3854,20 +3943,40 @@ async function enqueueMessage(item: Omit<QueueItem, 'guid' | 'timestamp'> & { gu
     // Get GUID from request body or generate one if not provided
     const guid = item.req.body.guid || item.guid || `auto-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     
-    // Check if message with this GUID already exists
+    // 04-09-25 23:55 - AJE: Enhanced duplicate check - only consider truly sent if GUID has WhatsApp ID
     if (messageQueue.has(guid)) {
-        console.log(`Message with GUID ${guid} already exists in queue. Skipping duplicate.`);
-        // Send response immediately for duplicate
+        console.log(`Message with GUID ${guid} already in queue. Skipping duplicate.`);
         if (!item.res.headersSent) {
             item.res.send({
                 sent: false,
                 message: "Duplicate message",
                 phone: item.req.body.phone,
-                status: "Duplicate GUID",
+                status: "Duplicate GUID - already in queue",
                 guid: guid
             });
         }
         return;
+    }
+    
+    // Check if message was truly sent (has both GUID and WhatsApp ID)
+    const existingSentMessage = sentGuids.get(guid);
+    if (existingSentMessage && existingSentMessage.whatsappId) {
+        console.log(`Message with GUID ${guid} already sent successfully with WhatsApp ID: ${existingSentMessage.whatsappId}. Skipping duplicate.`);
+        if (!item.res.headersSent) {
+            item.res.send({
+                sent: false,
+                message: "Duplicate message",
+                phone: item.req.body.phone,
+                status: "Duplicate GUID - already sent successfully",
+                guid: guid,
+                whatsappId: existingSentMessage.whatsappId
+            });
+        }
+        return;
+    } else if (existingSentMessage) {
+        console.log(`Message with GUID ${guid} exists but missing WhatsApp ID. Allowing retry as it may not have been sent successfully.`);
+        // Remove the incomplete entry to allow retry
+        sentGuids.delete(guid);
     }
     
     const queueItem: QueueItem = {
@@ -3883,6 +3992,113 @@ async function enqueueMessage(item: Omit<QueueItem, 'guid' | 'timestamp'> & { gu
     await saveQueueToFile();
     
     processQueue();
+}
+
+// 21-08-25 23:30 - AJE: Funciones para persistencia de GUIDs enviados con cleanup de 7 días
+// 04-09-25 23:45 - AJE: Updated to handle GUID + WhatsApp ID pairs
+function cleanupOldGuids() {
+    const cutoffTime = Date.now() - (GUID_RETENTION_DAYS * 24 * 60 * 60 * 1000); // 7 días en ms
+    let removedCount = 0;
+    
+    for (const [guid, messageInfo] of sentGuids.entries()) {
+        if (messageInfo.timestamp < cutoffTime) {
+            sentGuids.delete(guid);
+            removedCount++;
+        }
+    }
+    
+    if (removedCount > 0) {
+        console.log(`🧹 Cleaned up ${removedCount} old GUIDs (older than ${GUID_RETENTION_DAYS} days)`);
+    }
+}
+
+async function saveSentGuidsToFile() {
+    try {
+        // Cleanup old GUIDs before saving
+        cleanupOldGuids();
+        
+        // 04-09-25 23:45 - AJE: Enhanced to save GUID + WhatsApp ID pairs
+        const guidsObject: { [key: string]: SentMessageInfo } = {};
+        for (const [guid, messageInfo] of sentGuids.entries()) {
+            guidsObject[guid] = messageInfo;
+        }
+        
+        const data = {
+            sentGuids: guidsObject,
+            lastUpdated: new Date().toISOString(),
+            retentionDays: GUID_RETENTION_DAYS,
+            version: '2.0' // Version to handle backward compatibility
+        };
+        fs.writeFileSync(sentGuidsFilePath, JSON.stringify(data, null, 2));
+        // 04-09-25 23:55 - AJE: Enhanced logging to show GUIDs with/without WhatsApp IDs
+        let withWhatsAppId = 0;
+        let withoutWhatsAppId = 0;
+        for (const [guid, messageInfo] of sentGuids.entries()) {
+            if (messageInfo.whatsappId) {
+                withWhatsAppId++;
+            } else {
+                withoutWhatsAppId++;
+            }
+        }
+        console.log(`💾 Saved ${sentGuids.size} GUIDs to file: ${withWhatsAppId} with WhatsApp ID, ${withoutWhatsAppId} without ID (${GUID_RETENTION_DAYS} days retention)`);
+    } catch (error) {
+        console.error('❌ Error saving sent GUIDs to file:', error);
+    }
+}
+
+async function loadSentGuidsFromFile() {
+    try {
+        if (!fs.existsSync(sentGuidsFilePath)) {
+            console.log('📝 Sent GUIDs file does not exist, starting with empty map');
+            return;
+        }
+
+        const data = JSON.parse(fs.readFileSync(sentGuidsFilePath, 'utf-8'));
+        
+        // 04-09-25 23:45 - AJE: Handle multiple format versions for backward compatibility
+        if (data.sentGuids) {
+            sentGuids = new Map();
+            
+            if (Array.isArray(data.sentGuids)) {
+                // Very old format (array) - assign current timestamp to all GUIDs
+                const currentTime = Date.now();
+                for (const guid of data.sentGuids) {
+                    sentGuids.set(guid, { timestamp: currentTime });
+                }
+                console.log(`📖 Loaded ${sentGuids.size} sent GUIDs from very old format (assigned current timestamp)`);
+            } else if (data.version === '2.0') {
+                // New format v2.0 with GUID + WhatsApp ID pairs
+                for (const [guid, messageInfo] of Object.entries(data.sentGuids)) {
+                    sentGuids.set(guid, messageInfo as SentMessageInfo);
+                }
+                // Count GUIDs with and without WhatsApp IDs
+                let withWhatsAppId = 0;
+                let withoutWhatsAppId = 0;
+                for (const [guid, messageInfo] of sentGuids.entries()) {
+                    if (messageInfo.whatsappId) {
+                        withWhatsAppId++;
+                    } else {
+                        withoutWhatsAppId++;
+                    }
+                }
+                console.log(`📖 Loaded ${sentGuids.size} GUIDs from file v2.0: ${withWhatsAppId} with WhatsApp ID, ${withoutWhatsAppId} without ID (last updated: ${data.lastUpdated})`);
+            } else {
+                // Old format v1.0 with only timestamps - migrate to new format
+                for (const [guid, timestamp] of Object.entries(data.sentGuids)) {
+                    sentGuids.set(guid, { 
+                        timestamp: timestamp as number 
+                    });
+                }
+                console.log(`📖 Migrated ${sentGuids.size} sent GUIDs from v1.0 to v2.0 format (last updated: ${data.lastUpdated})`);
+            }
+            
+            // Cleanup old GUIDs after loading
+            cleanupOldGuids();
+        }
+    } catch (error) {
+        console.error('❌ Error loading sent GUIDs from file:', error);
+        sentGuids = new Map(); // Reset to empty map on error
+    }
 }
 
 // Queue persistence functions
@@ -4051,15 +4267,33 @@ async function processQueue() {
         try {
             console.log(`Processing message with GUID: ${guid} from queue. Queue length: ${messageQueue.size}`);
             
+            // 04-09-25 23:45 - AJE: Capture WhatsApp response to get real message ID
+            let whatsappResponse = null;
             if (current.messageType === 'text') {
-                await sendTextMessage(current.req, current.res, current.sock, current.handler);
+                whatsappResponse = await sendTextMessage(current.req, current.res, current.sock, current.handler);
             } else if (current.messageType === 'image') {
-                await sendFile(current.req, current.res, current.sock, current.handler);
+                whatsappResponse = await sendFile(current.req, current.res, current.sock, current.handler);
             }
             
             // Record that we sent a message
             recordMessageSent();
-            console.log(`Message with GUID ${guid} sent successfully. Messages sent in last minute: ${messageSentTimes.length}/${MAX_MESSAGES_PER_MINUTE}`);
+            
+            // 04-09-25 23:55 - AJE: Only mark as truly sent if we have WhatsApp ID response
+            const whatsappId = whatsappResponse?.key?.id;
+            
+            if (whatsappId) {
+                // Message sent successfully with WhatsApp confirmation
+                sentGuids.set(guid, { 
+                    timestamp: Date.now(),
+                    whatsappId: whatsappId 
+                });
+                console.log(`✅ Message with GUID ${guid} sent successfully with WhatsApp ID: ${whatsappId}. Messages sent in last minute: ${messageSentTimes.length}/${MAX_MESSAGES_PER_MINUTE}`);
+            } else {
+                // Message may have failed or response incomplete - don't mark as sent
+                console.log(`⚠️ Message with GUID ${guid} processed but no WhatsApp ID received. Not marking as sent to allow retry. Messages sent in last minute: ${messageSentTimes.length}/${MAX_MESSAGES_PER_MINUTE}`);
+            }
+            
+            await saveSentGuidsToFile();
             
         } catch (error) {
             console.error(`Error processing message with GUID ${guid}:`, error);
