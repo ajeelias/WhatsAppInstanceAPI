@@ -41,6 +41,7 @@
 //04-09-25 23:45  AJE: Enhanced duplicate control by storing GUID + WhatsApp ID pairs for better message tracking
 //04-09-25 23:55  AJE: Only consider messages truly sent if they have both GUID and WhatsApp response ID
 //04-09-25 23:59  AJE: Added version display at startup and updated to v1.1.0
+//05-09-25 00:10  AJE: Changed to internal version variables instead of package.json - v1.2.0
 
 import { Boom } from '@hapi/boom'
 import NodeCache from '@cacheable/node-cache'
@@ -63,8 +64,11 @@ import WebSocket from 'ws';
 import { promises as fss } from 'fs';
 import path from 'path';
 import chalk from 'chalk';
-// 04-09-25 23:59 - AJE: Import package.json for version display
-const packageJson = require('../package.json');
+
+// 05-09-25 00:10 - AJE: Internal version control - update this with each change
+const APP_VERSION = '1.2.0';
+const BUILD_DATE = '05-09-25 00:10';
+const VERSION_DESCRIPTION = 'Enhanced GUID + WhatsApp ID duplicate control system';
 
 // WebSocket connections with error handling
 let ws: WebSocket | null = null;
@@ -506,10 +510,10 @@ const timeToResendPendings = 90 * 1000 // cada 3 minutos que haga el ResendPendi
 
 // start a connection
 const init = async() => {
-	// 04-09-25 23:59 - AJE: Display version and build info at startup
-	console.log(chalk.bgBlueBright.white.bold(`🚀 WhatsApp Instance API v${packageJson.version} - Starting...`));
-	console.log(chalk.cyan(`📅 Build Date: 04-09-25 23:59`));
-	console.log(chalk.green(`🔧 Enhanced GUID + WhatsApp ID duplicate control system`));
+	// 05-09-25 00:10 - AJE: Display version and build info at startup using internal variables
+	console.log(chalk.bgBlueBright.white.bold(`🚀 WhatsApp Instance API v${APP_VERSION} - Starting...`));
+	console.log(chalk.cyan(`📅 Build Date: ${BUILD_DATE}`));
+	console.log(chalk.green(`🔧 ${VERSION_DESCRIPTION}`));
 	console.log(chalk.gray('━'.repeat(70)));
 	
 	// Load existing queue and sent GUIDs on startup
