@@ -2937,7 +2937,7 @@ async function sendMessageNew(req, res, sock, handler) {
 }
 
 // 04-09-25 23:45 - AJE: Modified to return WhatsApp response for GUID tracking
-async function sendTextMessage(req, res, sock, handler) {
+async function sendTextMessage(req, res, sock, handler): Promise<any> {
     let response;
     let phoneNumber;
     let exists;
@@ -3302,7 +3302,7 @@ async function sendConnectServices(m) {
 
 
 // 04-09-25 23:45 - AJE: Modified to return WhatsApp response for GUID tracking
-async function sendFile(req, res, sock, handler) {
+async function sendFile(req, res, sock, handler): Promise<any> {
 	let content;
 	let type = 'document'; // Valor por defecto
 	let options;
@@ -4268,7 +4268,7 @@ async function processQueue() {
             console.log(`Processing message with GUID: ${guid} from queue. Queue length: ${messageQueue.size}`);
             
             // 04-09-25 23:45 - AJE: Capture WhatsApp response to get real message ID
-            let whatsappResponse = null;
+            let whatsappResponse: any = null;
             if (current.messageType === 'text') {
                 whatsappResponse = await sendTextMessage(current.req, current.res, current.sock, current.handler);
             } else if (current.messageType === 'image') {
