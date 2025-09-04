@@ -42,6 +42,7 @@
 //04-09-25 23:55  AJE: Only consider messages truly sent if they have both GUID and WhatsApp response ID
 //04-09-25 23:59  AJE: Added version display at startup and updated to v1.1.0
 //05-09-25 00:10  AJE: Changed to internal version variables instead of package.json - v1.2.0
+//05-09-25 00:15  AJE: Changed to Baileys-based versioning 6.7.18.100 (subversion increments with each change)
 
 import { Boom } from '@hapi/boom'
 import NodeCache from '@cacheable/node-cache'
@@ -65,9 +66,10 @@ import { promises as fss } from 'fs';
 import path from 'path';
 import chalk from 'chalk';
 
-// 05-09-25 00:10 - AJE: Internal version control - update this with each change
-const APP_VERSION = '1.2.0';
-const BUILD_DATE = '05-09-25 00:10';
+// 05-09-25 00:15 - AJE: Internal version control - increment subversion (last number) with each change
+// Version format: 6.7.18.XXX where XXX is subversion number starting at 100
+const APP_VERSION = '6.7.18.100';
+const BUILD_DATE = '05-09-25 00:15';
 const VERSION_DESCRIPTION = 'Enhanced GUID + WhatsApp ID duplicate control system';
 
 // WebSocket connections with error handling
