@@ -40,6 +40,7 @@
 //11-08-25 AJE: Corregido reenvío de mensajes de grupo y filtrado de mensajes de protocolo
 //04-09-25 23:45  AJE: Enhanced duplicate control by storing GUID + WhatsApp ID pairs for better message tracking
 //04-09-25 23:55  AJE: Only consider messages truly sent if they have both GUID and WhatsApp response ID
+//04-09-25 23:59  AJE: Added version display at startup and updated to v1.1.0
 
 import { Boom } from '@hapi/boom'
 import NodeCache from '@cacheable/node-cache'
@@ -62,6 +63,8 @@ import WebSocket from 'ws';
 import { promises as fss } from 'fs';
 import path from 'path';
 import chalk from 'chalk';
+// 04-09-25 23:59 - AJE: Import package.json for version display
+const packageJson = require('../package.json');
 
 // WebSocket connections with error handling
 let ws: WebSocket | null = null;
@@ -503,6 +506,12 @@ const timeToResendPendings = 90 * 1000 // cada 3 minutos que haga el ResendPendi
 
 // start a connection
 const init = async() => {
+	// 04-09-25 23:59 - AJE: Display version and build info at startup
+	console.log(chalk.bgBlueBright.white.bold(`🚀 WhatsApp Instance API v${packageJson.version} - Starting...`));
+	console.log(chalk.cyan(`📅 Build Date: 04-09-25 23:59`));
+	console.log(chalk.green(`🔧 Enhanced GUID + WhatsApp ID duplicate control system`));
+	console.log(chalk.gray('━'.repeat(70)));
+	
 	// Load existing queue and sent GUIDs on startup
 	await loadQueueFromFile();
 	await loadSentGuidsFromFile();
