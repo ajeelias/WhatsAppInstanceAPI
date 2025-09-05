@@ -43,6 +43,7 @@
 //04-09-25 23:59  AJE: Added version display at startup and updated to v1.1.0
 //05-09-25 00:10  AJE: Changed to internal version variables instead of package.json - v1.2.0
 //05-09-25 00:15  AJE: Changed to Baileys-based versioning 6.7.18.100 (subversion increments with each change)
+//05-09-25 00:25  AJE: Enhanced removeAuthFolder() with async/await, retries, and multiple path checks - v6.7.18.101
 
 import { Boom } from '@hapi/boom'
 import NodeCache from '@cacheable/node-cache'
@@ -66,11 +67,11 @@ import { promises as fss } from 'fs';
 import path from 'path';
 import chalk from 'chalk';
 
-// 05-09-25 00:15 - AJE: Internal version control - increment subversion (last number) with each change
+// 05-09-25 00:25 - AJE: Internal version control - increment subversion (last number) with each change
 // Version format: 6.7.18.XXX where XXX is subversion number starting at 100
-const APP_VERSION = '6.7.18.100';
-const BUILD_DATE = '05-09-25 00:15';
-const VERSION_DESCRIPTION = 'Enhanced GUID + WhatsApp ID duplicate control system';
+const APP_VERSION = '6.7.18.102';
+const BUILD_DATE = '05-09-25 00:30';
+const VERSION_DESCRIPTION = 'Enhanced GUID + WhatsApp ID duplicate control + Comprehensive async auth cleanup';
 
 // WebSocket connections with error handling
 let ws: WebSocket | null = null;
@@ -866,23 +867,32 @@ function handleBoomError(statusCode: number, payload: any, instanceId: string, e
 			lastSentQrDate = '';
 			writeStateToFile({ emailSentForConnecting, emailSentForOpen, lastSentDate, lastSentQrDate });
 			
-            removeAuthFolder();
-            removeSession();
-            restartInstance(instanceId);
+            // 05-09-25 00:30 - AJE: Use async/await for proper cleanup sequence
+            (async () => {
+                await removeAuthFolder();
+                await removeSession();
+                setTimeout(() => restartInstance(instanceId), 2000);
+            })();
             break;
         case 402: // bannedTimetamp - Status code 402 has a ban timestamp
             console.log('Account temporarily banned with timestamp - removing auth folder');
             callSendDeviceStatus('Banned');
-            removeAuthFolder();
-            removeSession();
-            restartInstance(instanceId);
+            // 05-09-25 00:30 - AJE: Use async/await for proper cleanup sequence
+            (async () => {
+                await removeAuthFolder();
+                await removeSession();
+                setTimeout(() => restartInstance(instanceId), 2000);
+            })();
             break;
         case 403: // bannedTemporary - Account banned, main device was disconnected
             console.log('Account temporarily banned - removing auth folder');
             callSendDeviceStatus('Banned');
-            removeAuthFolder();
-            removeSession();
-            restartInstance(instanceId);
+            // 05-09-25 00:30 - AJE: Use async/await for proper cleanup sequence
+            (async () => {
+                await removeAuthFolder();
+                await removeSession();
+                setTimeout(() => restartInstance(instanceId), 2000);
+            })();
             break;
         case 405: // clientOutdated - Client outdated
             console.log('Client outdated - removing auth folder for fresh start');
@@ -908,9 +918,12 @@ function handleBoomError(statusCode: number, payload: any, instanceId: string, e
             break;
         case 411: // multideviceMismatch - Multi-device mismatch
             console.log('Multi-device mismatch - removing auth folder for fresh scan');
-            // removeAuthFolder();
-            // removeSession();
-            restartInstance(instanceId);
+            // 05-09-25 00:30 - AJE: Use async/await for proper cleanup sequence
+            (async () => {
+                await removeAuthFolder();
+                await removeSession();
+                setTimeout(() => restartInstance(instanceId), 2000);
+            })();
             break;
         case 413: // CATExpired - Cryptographic authentication token expired
             console.log('Authentication token expired - removing auth folder');
@@ -920,9 +933,12 @@ function handleBoomError(statusCode: number, payload: any, instanceId: string, e
             break;
         case 414: // CATInvalid - Cryptographic authentication token is invalid
             console.log('Authentication token invalid - removing auth folder');
-            removeAuthFolder();
-            removeSession();
-            restartInstance(instanceId);
+            // 05-09-25 00:30 - AJE: Use async/await for proper cleanup sequence
+            (async () => {
+                await removeAuthFolder();
+                await removeSession();
+                setTimeout(() => restartInstance(instanceId), 2000);
+            })();
             break;
         case 415: // notFound
             console.log('Resource not found - removing auth folder');
@@ -3682,39 +3698,123 @@ function deleteFileIfExists(filePath) {
     }
 }
 
-// Función para eliminar una carpeta si existe
-function removeFolder(folderPath) {
-    if (fs.existsSync(folderPath)) {
-        fs.rm(folderPath, { recursive: true, force: true }, (err) => {
-            if (err) {
-                console.error(`Error al eliminar la carpeta ${folderPath}:`, err);
-            } else {
-                console.log(`Carpeta eliminada con éxito: ${folderPath}`);
-            }
+// 05-09-25 00:25 - AJE: Enhanced removeFolder function with better error handling and async support
+async function removeFolder(folderPath) {
+    const absolutePath = path.resolve(folderPath);
+    
+    if (!fs.existsSync(absolutePath)) {
+        console.log(`📁 Carpeta no encontrada, no se requiere eliminar: ${absolutePath}`);
+        return true;
+    }
+
+    try {
+        // Wait a bit to ensure any file handles are closed
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        
+        // Try to remove with force and recursive options
+        await fss.rm(absolutePath, { 
+            recursive: true, 
+            force: true,
+            maxRetries: 3,
+            retryDelay: 1000
         });
-    } else {
-        console.log(`Carpeta no encontrada, no se requiere eliminar: ${folderPath}`);
+        
+        console.log(`✅ Carpeta eliminada con éxito: ${absolutePath}`);
+        return true;
+        
+    } catch (err) {
+        console.error(`❌ Error al eliminar la carpeta ${absolutePath}:`, err);
+        
+        // Try alternative method for stubborn folders
+        try {
+            console.log(`🔄 Intentando método alternativo para eliminar: ${absolutePath}`);
+            
+            // Try to remove files individually first
+            if (fs.existsSync(absolutePath)) {
+                const files = await fss.readdir(absolutePath);
+                for (const file of files) {
+                    const filePath = path.join(absolutePath, file);
+                    try {
+                        await fss.unlink(filePath);
+                    } catch (fileErr) {
+                        console.warn(`⚠️ No se pudo eliminar archivo: ${filePath}`, fileErr.message);
+                    }
+                }
+                // Try to remove empty directory
+                await fss.rmdir(absolutePath);
+                console.log(`✅ Carpeta eliminada con método alternativo: ${absolutePath}`);
+                return true;
+            }
+        } catch (altErr) {
+            console.error(`❌ Método alternativo también falló para: ${absolutePath}`, altErr);
+            return false;
+        }
     }
 }
 
-// Función principal para limpiar sesión
-function removeAuthFolder(){
-	const folder = './baileys_auth_info';
-	removeFolder(folder);
-	
+// 05-09-25 00:25 - AJE: Enhanced removeAuthFolder with async/await and better path handling
+async function removeAuthFolder(){
+    console.log('🧹 Iniciando limpieza de carpeta de autenticación...');
+    
+    const authFolders = [
+        './baileys_auth_info',
+        path.join(__dirname, 'baileys_auth_info'),
+        './Base/baileys_auth_info'
+    ];
+    
+    let success = false;
+    
+    for (const folder of authFolders) {
+        console.log(`🔍 Verificando carpeta: ${folder}`);
+        const result = await removeFolder(folder);
+        if (result) {
+            success = true;
+        }
+    }
+    
+    if (success) {
+        console.log('✅ Limpieza de autenticación completada exitosamente');
+    } else {
+        console.log('⚠️ Limpieza de autenticación completada con advertencias');
+    }
+    
+    return success;
 }
-function removeSession() {
-    console.log('Antes de borrar archivos y carpetas.');
+// 05-09-25 00:30 - AJE: Enhanced removeSession with async/await and better error handling
+async function removeSession() {
+    console.log('🧹 Iniciando limpieza de archivos de sesión...');
 
-    // Rutas a eliminar
-    // const folder = './baileys_auth_info';
     const files = [
         './auth_info_multi.json',
-        // './baileys_store_multi.json',
         './statesLog.json',
+        path.join(__dirname, 'auth_info_multi.json'),
+        path.join(__dirname, 'statesLog.json'),
+        './Base/auth_info_multi.json',
+        './Base/statesLog.json'
     ];
 
-    files.forEach(deleteFileIfExists);
+    let removedCount = 0;
+    
+    for (const filePath of files) {
+        try {
+            const absolutePath = path.resolve(filePath);
+            if (fs.existsSync(absolutePath)) {
+                await fss.unlink(absolutePath);
+                console.log(`✅ Archivo eliminado: ${absolutePath}`);
+                removedCount++;
+            }
+        } catch (err) {
+            console.warn(`⚠️ Error al eliminar archivo ${filePath}:`, err.message);
+        }
+    }
+    
+    if (removedCount > 0) {
+        console.log(`✅ Limpieza de sesión completada: ${removedCount} archivos eliminados`);
+    } else {
+        console.log(`📝 No se encontraron archivos de sesión para eliminar`);
+    }
+    
+    return removedCount;
 }
 
 
