@@ -44,6 +44,7 @@
 //05-09-25 00:10  AJE: Changed to internal version variables instead of package.json - v1.2.0
 //05-09-25 00:15  AJE: Changed to Baileys-based versioning 6.7.18.100 (subversion increments with each change)
 //05-09-25 00:25  AJE: Enhanced removeAuthFolder() with async/await, retries, and multiple path checks - v6.7.18.101
+//05-09-25 00:35  AJE: Fixed removeAuthFolder() and removeSession() to use correct instance paths - v6.7.18.103
 
 import { Boom } from '@hapi/boom'
 import NodeCache from '@cacheable/node-cache'
@@ -69,9 +70,9 @@ import chalk from 'chalk';
 
 // 05-09-25 00:25 - AJE: Internal version control - increment subversion (last number) with each change
 // Version format: 6.7.18.XXX where XXX is subversion number starting at 100
-const APP_VERSION = '6.7.18.102';
-const BUILD_DATE = '05-09-25 00:30';
-const VERSION_DESCRIPTION = 'Enhanced GUID + WhatsApp ID duplicate control + Comprehensive async auth cleanup';
+const APP_VERSION = '6.7.18.103';
+const BUILD_DATE = '05-09-25 00:35';
+const VERSION_DESCRIPTION = 'Enhanced GUID + WhatsApp ID duplicate control + Instance-aware path cleanup';
 
 // WebSocket connections with error handling
 let ws: WebSocket | null = null;
@@ -3752,7 +3753,7 @@ async function removeFolder(folderPath) {
     }
 }
 
-// 05-09-25 00:25 - AJE: Enhanced removeAuthFolder with async/await and better path handling
+// 05-09-25 00:35 - AJE: Enhanced removeAuthFolder with correct instance-based path handling
 async function removeAuthFolder(){
     console.log('🧹 Iniciando limpieza de carpeta de autenticación...');
     
@@ -3761,6 +3762,27 @@ async function removeAuthFolder(){
         path.join(__dirname, 'baileys_auth_info'),
         './Base/baileys_auth_info'
     ];
+    
+    // 05-09-25 00:35 - AJE: Agregar rutas específicas de la instancia
+    if (instanceId && instanceId !== '') {
+        // Para instancias que usan estructura C:\WhatsAppInstances\{instanceId}\Baileys\
+        const instanceBasePath = path.resolve(process.cwd(), '..', '..', '..'); // Volver tres niveles desde el directorio actual
+        const instanceAuthPath = path.join(instanceBasePath, 'WhatsAppInstances', instanceId, 'Baileys', 'baileys_auth_info');
+        
+        // Para estructura alternativa (directamente en la carpeta de la instancia)
+        const instanceDirectPath = path.join(process.cwd(), 'baileys_auth_info');
+        
+        authFolders.push(
+            instanceAuthPath,
+            instanceDirectPath,
+            // Rutas adicionales basadas en el working directory
+            path.join(process.cwd(), '..', 'baileys_auth_info'),
+            path.join(process.cwd(), '..', '..', 'baileys_auth_info')
+        );
+        
+        console.log(`🏷️  Buscando carpetas para instancia ID: ${instanceId}`);
+        console.log(`📍 Ruta de instancia calculada: ${instanceAuthPath}`);
+    }
     
     let success = false;
     
@@ -3780,7 +3802,7 @@ async function removeAuthFolder(){
     
     return success;
 }
-// 05-09-25 00:30 - AJE: Enhanced removeSession with async/await and better error handling
+// 05-09-25 00:35 - AJE: Enhanced removeSession with instance-aware path handling
 async function removeSession() {
     console.log('🧹 Iniciando limpieza de archivos de sesión...');
 
@@ -3792,6 +3814,26 @@ async function removeSession() {
         './Base/auth_info_multi.json',
         './Base/statesLog.json'
     ];
+    
+    // 05-09-25 00:35 - AJE: Agregar rutas específicas de la instancia para archivos de sesión
+    if (instanceId && instanceId !== '') {
+        const instanceBasePath = path.resolve(process.cwd(), '..', '..', '..');
+        const instanceSessionPath = path.join(instanceBasePath, 'WhatsAppInstances', instanceId, 'Baileys');
+        
+        files.push(
+            // Archivos en la carpeta de la instancia
+            path.join(instanceSessionPath, 'auth_info_multi.json'),
+            path.join(instanceSessionPath, 'statesLog.json'),
+            // En el directorio actual de la instancia
+            path.join(process.cwd(), 'auth_info_multi.json'),
+            path.join(process.cwd(), 'statesLog.json'),
+            // Un nivel arriba
+            path.join(process.cwd(), '..', 'auth_info_multi.json'),
+            path.join(process.cwd(), '..', 'statesLog.json')
+        );
+        
+        console.log(`🏷️  Buscando archivos de sesión para instancia ID: ${instanceId}`);
+    }
 
     let removedCount = 0;
     
