@@ -52,6 +52,7 @@
 //05-09-25 01:00  AJE: Added comprehensive debugging to identify folder deletion issues - v6.7.18.108
 //05-09-25 01:05  AJE: Replaced remaining removeSession() calls with removeAuthFolder() for consistency - v6.7.18.109
 //05-09-25 01:10  AJE: Fixed removeImages() to properly delete files older than one month - v6.7.18.110
+//05-09-25 01:15  AJE: Enhanced creds.json protection with validation, backup, and atomic writes - v6.7.18.111
 
 import { Boom } from '@hapi/boom'
 import NodeCache from '@cacheable/node-cache'
@@ -77,9 +78,9 @@ import chalk from 'chalk';
 
 // 05-09-25 00:25 - AJE: Internal version control - increment subversion (last number) with each change
 // Version format: 6.7.18.XXX where XXX is subversion number starting at 100
-const APP_VERSION = '6.7.18.110';
-const BUILD_DATE = '05-09-25 01:10';
-const VERSION_DESCRIPTION = 'Enhanced GUID + WhatsApp ID duplicate control + Fixed removeImages month logic';
+const APP_VERSION = '6.7.18.111';
+const BUILD_DATE = '05-09-25 01:15';
+const VERSION_DESCRIPTION = 'Enhanced GUID + WhatsApp ID duplicate control + Protected creds.json from corruption';
 
 // WebSocket connections with error handling
 let ws: WebSocket | null = null;
