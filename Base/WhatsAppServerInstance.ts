@@ -46,6 +46,7 @@
 //05-09-25 00:25  AJE: Enhanced removeAuthFolder() with async/await, retries, and multiple path checks - v6.7.18.101
 //05-09-25 00:35  AJE: Fixed removeAuthFolder() and removeSession() to use correct instance paths - v6.7.18.103
 //05-09-25 00:40  AJE: Enhanced debugging and added comprehensive Windows path patterns - v6.7.18.104
+//05-09-25 00:45  AJE: Simplified path detection to avoid duplications and focus on correct locations - v6.7.18.105
 
 import { Boom } from '@hapi/boom'
 import NodeCache from '@cacheable/node-cache'
@@ -71,9 +72,9 @@ import chalk from 'chalk';
 
 // 05-09-25 00:25 - AJE: Internal version control - increment subversion (last number) with each change
 // Version format: 6.7.18.XXX where XXX is subversion number starting at 100
-const APP_VERSION = '6.7.18.104';
-const BUILD_DATE = '05-09-25 00:40';
-const VERSION_DESCRIPTION = 'Enhanced GUID + WhatsApp ID duplicate control + Comprehensive path debugging';
+const APP_VERSION = '6.7.18.105';
+const BUILD_DATE = '05-09-25 00:45';
+const VERSION_DESCRIPTION = 'Enhanced GUID + WhatsApp ID duplicate control + Simplified path detection';
 
 // WebSocket connections with error handling
 let ws: WebSocket | null = null;
@@ -3764,42 +3765,28 @@ async function removeAuthFolder(){
         './Base/baileys_auth_info'
     ];
     
-    // 05-09-25 00:40 - AJE: Agregar rutas específicas de la instancia con mejores patrones
+    // 05-09-25 00:45 - AJE: Rutas simplificadas basadas en el cwd actual
     if (instanceId && instanceId !== '') {
-        // Rutas comunes para Windows
-        const commonWindowsPaths = [
+        const cwd = process.cwd();
+        
+        // Si ya estamos en la estructura correcta (ej: C:\WhatsAppInstances\1033\Baileys)
+        authFolders.push(
+            // Directamente en el directorio actual
+            path.join(cwd, 'baileys_auth_info'),
+            
+            // Rutas absolutas comunes para Windows
             `C:\\WhatsAppInstances\\${instanceId}\\Baileys\\baileys_auth_info`,
             `D:\\WhatsAppInstances\\${instanceId}\\Baileys\\baileys_auth_info`,
-            path.join('C:', 'WhatsAppInstances', instanceId, 'Baileys', 'baileys_auth_info'),
-            path.join('D:', 'WhatsAppInstances', instanceId, 'Baileys', 'baileys_auth_info')
-        ];
-        
-        // Rutas basadas en el directorio actual
-        const basePaths = [
-            path.resolve(process.cwd(), '..', '..', '..'), // Volver tres niveles
-            path.resolve(process.cwd(), '..', '..'), // Volver dos niveles
-            path.resolve(process.cwd(), '..'), // Volver un nivel
-            process.cwd() // Directorio actual
-        ];
-        
-        const relativeInstancePaths = [];
-        for (const basePath of basePaths) {
-            relativeInstancePaths.push(
-                path.join(basePath, 'WhatsAppInstances', instanceId, 'Baileys', 'baileys_auth_info'),
-                path.join(basePath, instanceId, 'Baileys', 'baileys_auth_info'),
-                path.join(basePath, instanceId, 'baileys_auth_info'),
-                path.join(basePath, 'baileys_auth_info')
-            );
-        }
-        
-        authFolders.push(
-            ...commonWindowsPaths,
-            ...relativeInstancePaths,
-            // Directamente en el cwd
-            path.join(process.cwd(), 'baileys_auth_info')
+            
+            // Un nivel arriba (si estamos en una subcarpeta)
+            path.join(cwd, '..', 'baileys_auth_info'),
+            
+            // Dos niveles arriba 
+            path.join(cwd, '..', '..', 'baileys_auth_info')
         );
         
         console.log(`🏷️  Buscando carpetas para instancia ID: ${instanceId}`);
+        console.log(`📂 Directorio base: ${cwd}`);
     }
     
     let success = false;
@@ -3839,46 +3826,33 @@ async function removeSession() {
         './Base/statesLog.json'
     ];
     
-    // 05-09-25 00:40 - AJE: Agregar rutas específicas de la instancia con mejores patrones
+    // 05-09-25 00:45 - AJE: Rutas simplificadas basadas en el cwd actual
     if (instanceId && instanceId !== '') {
-        // Rutas comunes para Windows  
-        const commonWindowsPaths = [
+        const cwd = process.cwd();
+        
+        // Archivos de sesión en ubicaciones probables
+        files.push(
+            // Directamente en el directorio actual
+            path.join(cwd, 'auth_info_multi.json'),
+            path.join(cwd, 'statesLog.json'),
+            
+            // Rutas absolutas comunes para Windows
             `C:\\WhatsAppInstances\\${instanceId}\\Baileys\\auth_info_multi.json`,
             `C:\\WhatsAppInstances\\${instanceId}\\Baileys\\statesLog.json`,
-            `D:\\WhatsAppInstances\\${instanceId}\\Baileys\\auth_info_multi.json`, 
+            `D:\\WhatsAppInstances\\${instanceId}\\Baileys\\auth_info_multi.json`,
             `D:\\WhatsAppInstances\\${instanceId}\\Baileys\\statesLog.json`,
-            path.join('C:', 'WhatsAppInstances', instanceId, 'Baileys', 'auth_info_multi.json'),
-            path.join('C:', 'WhatsAppInstances', instanceId, 'Baileys', 'statesLog.json'),
-            path.join('D:', 'WhatsAppInstances', instanceId, 'Baileys', 'auth_info_multi.json'),
-            path.join('D:', 'WhatsAppInstances', instanceId, 'Baileys', 'statesLog.json')
-        ];
-        
-        // Rutas basadas en el directorio actual
-        const basePaths = [
-            path.resolve(process.cwd(), '..', '..', '..'),
-            path.resolve(process.cwd(), '..', '..'), 
-            path.resolve(process.cwd(), '..'),
-            process.cwd()
-        ];
-        
-        const relativeInstancePaths = [];
-        for (const basePath of basePaths) {
-            relativeInstancePaths.push(
-                path.join(basePath, 'WhatsAppInstances', instanceId, 'Baileys', 'auth_info_multi.json'),
-                path.join(basePath, 'WhatsAppInstances', instanceId, 'Baileys', 'statesLog.json'),
-                path.join(basePath, instanceId, 'Baileys', 'auth_info_multi.json'),
-                path.join(basePath, instanceId, 'Baileys', 'statesLog.json'),
-                path.join(basePath, instanceId, 'auth_info_multi.json'),
-                path.join(basePath, instanceId, 'statesLog.json')
-            );
-        }
-        
-        files.push(
-            ...commonWindowsPaths,
-            ...relativeInstancePaths
+            
+            // Un nivel arriba (si estamos en una subcarpeta)
+            path.join(cwd, '..', 'auth_info_multi.json'),
+            path.join(cwd, '..', 'statesLog.json'),
+            
+            // Dos niveles arriba
+            path.join(cwd, '..', '..', 'auth_info_multi.json'),
+            path.join(cwd, '..', '..', 'statesLog.json')
         );
         
         console.log(`🏷️  Buscando archivos de sesión para instancia ID: ${instanceId}`);
+        console.log(`📂 Directorio base: ${cwd}`);
     }
 
     // 05-09-25 00:40 - AJE: Mostrar información detallada para debugging
