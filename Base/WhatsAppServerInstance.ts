@@ -50,6 +50,7 @@
 //05-09-25 00:50  AJE: Fixed session file paths - files are inside baileys_auth_info folder - v6.7.18.106
 //05-09-25 00:55  AJE: Production-optimized cleanup - only remove baileys_auth_info folder (contains all files) - v6.7.18.107
 //05-09-25 01:00  AJE: Added comprehensive debugging to identify folder deletion issues - v6.7.18.108
+//05-09-25 01:05  AJE: Replaced remaining removeSession() calls with removeAuthFolder() for consistency - v6.7.18.109
 
 import { Boom } from '@hapi/boom'
 import NodeCache from '@cacheable/node-cache'
@@ -75,9 +76,9 @@ import chalk from 'chalk';
 
 // 05-09-25 00:25 - AJE: Internal version control - increment subversion (last number) with each change
 // Version format: 6.7.18.XXX where XXX is subversion number starting at 100
-const APP_VERSION = '6.7.18.108';
-const BUILD_DATE = '05-09-25 01:00';
-const VERSION_DESCRIPTION = 'Enhanced GUID + WhatsApp ID duplicate control + Advanced folder deletion debugging';
+const APP_VERSION = '6.7.18.109';
+const BUILD_DATE = '05-09-25 01:05';
+const VERSION_DESCRIPTION = 'Enhanced GUID + WhatsApp ID duplicate control + Consistent removeAuthFolder usage';
 
 // WebSocket connections with error handling
 let ws: WebSocket | null = null;
@@ -765,7 +766,10 @@ function handleQR(qr: string) {
     lastSentDate 			= currentDate; // Actualizar la fecha del último envío
     lastSentQrDate 			= currentDate;
     writeStateToFile({ emailSentForConnecting, emailSentForOpen, lastSentDate, lastSentQrDate });
-    removeSession();
+    // 05-09-25 01:05 - AJE: Use removeAuthFolder to delete entire baileys_auth_info folder
+    (async () => {
+        await removeAuthFolder();
+    })();
     // clearStore();
 }
 
@@ -845,7 +849,10 @@ function handleBoomError(statusCode: number, payload: any, instanceId: string, e
 	if (errorMessage) {
 		if (errorMessage === 'Stream Errored (conflict)' || errorMessage === 'Connection Failure') {
 			console.log('connection replaced');
-			removeSession();
+			// 05-09-25 01:05 - AJE: Use removeAuthFolder to delete entire baileys_auth_info folder
+			(async () => {
+				await removeAuthFolder();
+			})();
 			const newJson = `{"InstanceId":${instanceId},"Action":"Reiniciar"}`;
 			sendWhatsAppInstance(JSON.parse(newJson));
 			return;
