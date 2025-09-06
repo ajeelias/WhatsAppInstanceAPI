@@ -51,6 +51,7 @@
 //05-09-25 00:55  AJE: Production-optimized cleanup - only remove baileys_auth_info folder (contains all files) - v6.7.18.107
 //05-09-25 01:00  AJE: Added comprehensive debugging to identify folder deletion issues - v6.7.18.108
 //05-09-25 01:05  AJE: Replaced remaining removeSession() calls with removeAuthFolder() for consistency - v6.7.18.109
+//05-09-25 01:10  AJE: Fixed removeImages() to properly delete files older than one month - v6.7.18.110
 
 import { Boom } from '@hapi/boom'
 import NodeCache from '@cacheable/node-cache'
@@ -76,9 +77,9 @@ import chalk from 'chalk';
 
 // 05-09-25 00:25 - AJE: Internal version control - increment subversion (last number) with each change
 // Version format: 6.7.18.XXX where XXX is subversion number starting at 100
-const APP_VERSION = '6.7.18.109';
-const BUILD_DATE = '05-09-25 01:05';
-const VERSION_DESCRIPTION = 'Enhanced GUID + WhatsApp ID duplicate control + Consistent removeAuthFolder usage';
+const APP_VERSION = '6.7.18.110';
+const BUILD_DATE = '05-09-25 01:10';
+const VERSION_DESCRIPTION = 'Enhanced GUID + WhatsApp ID duplicate control + Fixed removeImages month logic';
 
 // WebSocket connections with error handling
 let ws: WebSocket | null = null;
@@ -767,9 +768,9 @@ function handleQR(qr: string) {
     lastSentQrDate 			= currentDate;
     writeStateToFile({ emailSentForConnecting, emailSentForOpen, lastSentDate, lastSentQrDate });
     // 05-09-25 01:05 - AJE: Use removeAuthFolder to delete entire baileys_auth_info folder
-    (async () => {
-        await removeAuthFolder();
-    })();
+    // (async () => {
+    //     await removeAuthFolder();
+    // })();
     // clearStore();
 }
 
@@ -3651,45 +3652,63 @@ async function removeFile(path: string) {
         }
     }
 } 
- async function removeImages(){ //16/11/23
+ async function removeImages(){ 
+	// 05-09-25 01:10 - AJE: Corregir lógica para borrar imágenes del último mes correctamente
+	console.log('🗑️  Iniciando limpieza de imágenes antiguas...');
 
 	const today = new Date();
-	const yyyy = today.getFullYear();
-	const mm = today.getMonth() + 1; // Months start at 0!
-	let dd  = today.getDate() - 1
-	var day =''
-	var month = ''
-	var fullDate = ''
-
-	if (dd < 10) {
-		day = '0' + dd
-	} else {
-		day = `${dd}`
-	}
-
-	if (mm < 10) {
-		month = '0' + mm
-	} else {
-		month = `${mm}`
-	}
-
-	fullDate = yyyy + '-' + month + '-' + day + ',00:00:10'
-
-	console.log('Date = '+ yyyy + '-' + month + '-' + day)
-	var dateNow = new Date(fullDate); //yyyy-mm-dd hh:mm:ss
+	const oneMonthAgo = new Date();
+	oneMonthAgo.setMonth(today.getMonth() - 1); // Un mes atrás desde hoy
 	
+	console.log(`📅 Fecha actual: ${today.toLocaleDateString()}`);
+	console.log(`📅 Eliminando archivos anteriores a: ${oneMonthAgo.toLocaleDateString()}`);
 
-	fs.readdirSync('./Media/').forEach(file => {
-		const fileDate = fs.statSync(`./Media/${file}`).birthtime
-		console.log('fileName='+`./Media/${file}`)
-
-		console.log('fileDate='+fileDate.getDate() + ' -- ' + dateNow.getDate())
-		
-		if (fileDate.getDate() < dateNow.getDate()) {
-			fs.unlinkSync(`./Media/${file}`)
+	try {
+		// Verificar si existe el directorio Media
+		if (!fs.existsSync('./Media/')) {
+			console.log('📁 Directorio ./Media/ no existe, creándolo...');
+			fs.mkdirSync('./Media/', { recursive: true });
+			return;
 		}
 
-	})
+		const files = fs.readdirSync('./Media/');
+		let deletedCount = 0;
+		let errorCount = 0;
+		
+		console.log(`📂 Encontrados ${files.length} archivos en ./Media/`);
+
+		files.forEach(file => {
+			try {
+				const filePath = `./Media/${file}`;
+				const fileStats = fs.statSync(filePath);
+				const fileDate = fileStats.birthtime; // Fecha de creación del archivo
+				
+				console.log(`🔍 Archivo: ${file}`);
+				console.log(`   📅 Fecha creación: ${fileDate.toLocaleDateString()} ${fileDate.toLocaleTimeString()}`);
+				
+				// Comparar fechas completas (no solo días)
+				if (fileDate < oneMonthAgo) {
+					fs.unlinkSync(filePath);
+					deletedCount++;
+					console.log(`✅ Eliminado: ${file} (${fileDate.toLocaleDateString()})`);
+				} else {
+					console.log(`⏭️  Conservado: ${file} (reciente)`);
+				}
+				
+			} catch (fileErr) {
+				errorCount++;
+				console.error(`❌ Error procesando archivo ${file}:`, fileErr.message);
+			}
+		});
+		
+		console.log(`🎯 Limpieza completada:`);
+		console.log(`   ✅ Archivos eliminados: ${deletedCount}`);
+		console.log(`   📄 Archivos conservados: ${files.length - deletedCount - errorCount}`);
+		console.log(`   ❌ Errores: ${errorCount}`);
+		
+	} catch (err) {
+		console.error('❌ Error en limpieza de imágenes:', err.message);
+	}
 }
 
 function deleteFileIfExists(filePath) {
