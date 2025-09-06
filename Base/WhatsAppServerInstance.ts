@@ -48,6 +48,7 @@
 //05-09-25 00:40  AJE: Enhanced debugging and added comprehensive Windows path patterns - v6.7.18.104
 //05-09-25 00:45  AJE: Simplified path detection to avoid duplications and focus on correct locations - v6.7.18.105
 //05-09-25 00:50  AJE: Fixed session file paths - files are inside baileys_auth_info folder - v6.7.18.106
+//05-09-25 00:55  AJE: Production-optimized cleanup - only remove baileys_auth_info folder (contains all files) - v6.7.18.107
 
 import { Boom } from '@hapi/boom'
 import NodeCache from '@cacheable/node-cache'
@@ -73,9 +74,9 @@ import chalk from 'chalk';
 
 // 05-09-25 00:25 - AJE: Internal version control - increment subversion (last number) with each change
 // Version format: 6.7.18.XXX where XXX is subversion number starting at 100
-const APP_VERSION = '6.7.18.106';
-const BUILD_DATE = '05-09-25 00:50';
-const VERSION_DESCRIPTION = 'Enhanced GUID + WhatsApp ID duplicate control + Fixed session file paths';
+const APP_VERSION = '6.7.18.107';
+const BUILD_DATE = '05-09-25 00:55';
+const VERSION_DESCRIPTION = 'Enhanced GUID + WhatsApp ID duplicate control + Production-optimized cleanup';
 
 // WebSocket connections with error handling
 let ws: WebSocket | null = null;
@@ -871,30 +872,27 @@ function handleBoomError(statusCode: number, payload: any, instanceId: string, e
 			lastSentQrDate = '';
 			writeStateToFile({ emailSentForConnecting, emailSentForOpen, lastSentDate, lastSentQrDate });
 			
-            // 05-09-25 00:30 - AJE: Use async/await for proper cleanup sequence
+            // 05-09-25 00:55 - AJE: Only need to remove baileys_auth_info folder (contains all session files)
             (async () => {
                 await removeAuthFolder();
-                await removeSession();
                 setTimeout(() => restartInstance(instanceId), 2000);
             })();
             break;
         case 402: // bannedTimetamp - Status code 402 has a ban timestamp
             console.log('Account temporarily banned with timestamp - removing auth folder');
             callSendDeviceStatus('Banned');
-            // 05-09-25 00:30 - AJE: Use async/await for proper cleanup sequence
+            // 05-09-25 00:55 - AJE: Only need to remove baileys_auth_info folder (contains all session files)
             (async () => {
                 await removeAuthFolder();
-                await removeSession();
                 setTimeout(() => restartInstance(instanceId), 2000);
             })();
             break;
         case 403: // bannedTemporary - Account banned, main device was disconnected
             console.log('Account temporarily banned - removing auth folder');
             callSendDeviceStatus('Banned');
-            // 05-09-25 00:30 - AJE: Use async/await for proper cleanup sequence
+            // 05-09-25 00:55 - AJE: Only need to remove baileys_auth_info folder (contains all session files)
             (async () => {
                 await removeAuthFolder();
-                await removeSession();
                 setTimeout(() => restartInstance(instanceId), 2000);
             })();
             break;
@@ -922,10 +920,9 @@ function handleBoomError(statusCode: number, payload: any, instanceId: string, e
             break;
         case 411: // multideviceMismatch - Multi-device mismatch
             console.log('Multi-device mismatch - removing auth folder for fresh scan');
-            // 05-09-25 00:30 - AJE: Use async/await for proper cleanup sequence
+            // 05-09-25 00:55 - AJE: Only need to remove baileys_auth_info folder (contains all session files)
             (async () => {
                 await removeAuthFolder();
-                await removeSession();
                 setTimeout(() => restartInstance(instanceId), 2000);
             })();
             break;
@@ -937,10 +934,9 @@ function handleBoomError(statusCode: number, payload: any, instanceId: string, e
             break;
         case 414: // CATInvalid - Cryptographic authentication token is invalid
             console.log('Authentication token invalid - removing auth folder');
-            // 05-09-25 00:30 - AJE: Use async/await for proper cleanup sequence
+            // 05-09-25 00:55 - AJE: Only need to remove baileys_auth_info folder (contains all session files)
             (async () => {
                 await removeAuthFolder();
-                await removeSession();
                 setTimeout(() => restartInstance(instanceId), 2000);
             })();
             break;
@@ -3760,10 +3756,9 @@ async function removeFolder(folderPath) {
 async function removeAuthFolder(){
     console.log('🧹 Iniciando limpieza de carpeta de autenticación...');
     
+    // 05-09-25 00:55 - AJE: Eliminar rutas Base/ que no existen en producción  
     const authFolders = [
-        './baileys_auth_info',
-        path.join(__dirname, 'baileys_auth_info'),
-        './Base/baileys_auth_info'
+        './baileys_auth_info'
     ];
     
     // 05-09-25 00:45 - AJE: Rutas simplificadas basadas en el cwd actual
@@ -3786,8 +3781,9 @@ async function removeAuthFolder(){
             path.join(cwd, '..', '..', 'baileys_auth_info')
         );
         
-        console.log(`🏷️  Buscando carpetas para instancia ID: ${instanceId}`);
+        console.log(`🏷️  Buscando carpeta baileys_auth_info para instancia ID: ${instanceId}`);
         console.log(`📂 Directorio base: ${cwd}`);
+        console.log(`🗂️  Estructura: ${cwd}\\baileys_auth_info (carpeta completa)`);
     }
     
     let success = false;
