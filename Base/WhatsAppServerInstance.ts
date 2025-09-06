@@ -49,6 +49,7 @@
 //05-09-25 00:45  AJE: Simplified path detection to avoid duplications and focus on correct locations - v6.7.18.105
 //05-09-25 00:50  AJE: Fixed session file paths - files are inside baileys_auth_info folder - v6.7.18.106
 //05-09-25 00:55  AJE: Production-optimized cleanup - only remove baileys_auth_info folder (contains all files) - v6.7.18.107
+//05-09-25 01:00  AJE: Added comprehensive debugging to identify folder deletion issues - v6.7.18.108
 
 import { Boom } from '@hapi/boom'
 import NodeCache from '@cacheable/node-cache'
@@ -74,9 +75,9 @@ import chalk from 'chalk';
 
 // 05-09-25 00:25 - AJE: Internal version control - increment subversion (last number) with each change
 // Version format: 6.7.18.XXX where XXX is subversion number starting at 100
-const APP_VERSION = '6.7.18.107';
-const BUILD_DATE = '05-09-25 00:55';
-const VERSION_DESCRIPTION = 'Enhanced GUID + WhatsApp ID duplicate control + Production-optimized cleanup';
+const APP_VERSION = '6.7.18.108';
+const BUILD_DATE = '05-09-25 01:00';
+const VERSION_DESCRIPTION = 'Enhanced GUID + WhatsApp ID duplicate control + Advanced folder deletion debugging';
 
 // WebSocket connections with error handling
 let ws: WebSocket | null = null;
@@ -3702,12 +3703,27 @@ function deleteFileIfExists(filePath) {
 async function removeFolder(folderPath) {
     const absolutePath = path.resolve(folderPath);
     
+    console.log(`🔍 DEBUGGING removeFolder:`);
+    console.log(`   - Ruta recibida: ${folderPath}`);
+    console.log(`   - Ruta absoluta: ${absolutePath}`);
+    console.log(`   - Existe la carpeta: ${fs.existsSync(absolutePath)}`);
+    
     if (!fs.existsSync(absolutePath)) {
         console.log(`📁 Carpeta no encontrada, no se requiere eliminar: ${absolutePath}`);
         return true;
     }
 
+    // Mostrar contenido de la carpeta antes de eliminar
     try {
+        const files = await fss.readdir(absolutePath);
+        console.log(`📂 Contenido de la carpeta (${files.length} elementos):`, files);
+    } catch (dirErr) {
+        console.error(`❌ Error al leer contenido de la carpeta:`, dirErr);
+    }
+
+    try {
+        console.log(`🗑️  Intentando eliminar carpeta: ${absolutePath}`);
+        
         // Wait a bit to ensure any file handles are closed
         await new Promise(resolve => setTimeout(resolve, 1000));
         
@@ -3719,11 +3735,18 @@ async function removeFolder(folderPath) {
             retryDelay: 1000
         });
         
-        console.log(`✅ Carpeta eliminada con éxito: ${absolutePath}`);
-        return true;
+        // Verificar si realmente se eliminó
+        const stillExists = fs.existsSync(absolutePath);
+        if (!stillExists) {
+            console.log(`✅ Carpeta eliminada con éxito: ${absolutePath}`);
+            return true;
+        } else {
+            console.error(`❌ La carpeta aún existe después del intento: ${absolutePath}`);
+        }
         
     } catch (err) {
-        console.error(`❌ Error al eliminar la carpeta ${absolutePath}:`, err);
+        console.error(`❌ Error al eliminar la carpeta ${absolutePath}:`, err.message);
+        console.error(`❌ Stack trace:`, err.stack);
         
         // Try alternative method for stubborn folders
         try {
@@ -3732,21 +3755,36 @@ async function removeFolder(folderPath) {
             // Try to remove files individually first
             if (fs.existsSync(absolutePath)) {
                 const files = await fss.readdir(absolutePath);
+                console.log(`📝 Eliminando ${files.length} archivos individualmente...`);
+                
                 for (const file of files) {
                     const filePath = path.join(absolutePath, file);
                     try {
+                        console.log(`🗑️  Eliminando archivo: ${filePath}`);
                         await fss.unlink(filePath);
+                        console.log(`✅ Archivo eliminado: ${filePath}`);
                     } catch (fileErr) {
                         console.warn(`⚠️ No se pudo eliminar archivo: ${filePath}`, fileErr.message);
                     }
                 }
+                
                 // Try to remove empty directory
+                console.log(`🗑️  Intentando eliminar directorio vacío: ${absolutePath}`);
                 await fss.rmdir(absolutePath);
-                console.log(`✅ Carpeta eliminada con método alternativo: ${absolutePath}`);
-                return true;
+                
+                // Verificar eliminación
+                const stillExists = fs.existsSync(absolutePath);
+                if (!stillExists) {
+                    console.log(`✅ Carpeta eliminada con método alternativo: ${absolutePath}`);
+                    return true;
+                } else {
+                    console.error(`❌ La carpeta aún existe después del método alternativo: ${absolutePath}`);
+                    return false;
+                }
             }
         } catch (altErr) {
-            console.error(`❌ Método alternativo también falló para: ${absolutePath}`, altErr);
+            console.error(`❌ Método alternativo también falló para: ${absolutePath}`, altErr.message);
+            console.error(`❌ Stack trace alternativo:`, altErr.stack);
             return false;
         }
     }
